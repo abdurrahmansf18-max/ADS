@@ -1,0 +1,14 @@
+# GPU eki: NVIDIA ekran karti olan bilgisayarda docker-compose.yml ile BIRLIKTE kullanilir.
+# Konteynere ekran kartini verir; 5.1 / 5.4 / ana hat YOLO'yu GPU'da calistirir (--device auto).
+# Gerekenler (host): NVIDIA surucusu ve NVIDIA Container Toolkit.
+# docker/baslat.sh bu dosyayi GPU varsa kendiliginden ekler. Elle:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml up -d
+services:
+  cv-lab:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

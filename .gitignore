@@ -1,0 +1,15 @@
+# Üretilenler: modüller ve arayüz yeniden üretir
+outputs/
+data/uretilen_veri/kurulum_dosyalari/yedek/
+
+# YOLO modelleri: depoda yalnız yolo11n.pt (varsayılan); diğerleri için README.md → "Diğer YOLO modellerini indir"
+data/hazir_veri/yolo_modeli/*.pt
+!data/hazir_veri/yolo_modeli/yolo11n.pt
+
+# Python, Jupyter, editör ve sistem dosyaları
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store

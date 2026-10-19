@@ -1,0 +1,24 @@
+# Arayuz renkleri: videodaki cizimlerle ayni anlam (yesil basarili, sari uyari, kirmizi hata/risk).
+[theme]
+base = "dark"
+primaryColor = "#F2C230"            # vurgu: serit sarisi (dugmeler, basliklar)
+backgroundColor = "#0E1420"         # zemin: gece mavisi (hafif isik gecisi bilesenler/tema.py'de)
+secondaryBackgroundColor = "#182131" # paneller ve girisler
+textColor = "#E6EAF0"
+greenColor = "#2EB872"              # basarili / olculdu (videodaki serit alani)
+orangeColor = "#F5A524"             # uyari (videodaki sari risk)
+yellowColor = "#F5A524"
+redColor = "#E5484D"                # hata / risk (videodaki seritteki engel)
+grayColor = "#8C97A8"               # kilitli / bekliyor
+borderColor = "#263246"
+chartCategoricalColors = ["#F2C230", "#2EB872", "#E5484D", "#5B9BD5", "#F5A524", "#8B929C"]
+
+[server]
+headless = true
+maxUploadSize = 500                 # MB: yuklenen videolar icin
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

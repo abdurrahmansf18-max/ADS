@@ -1,0 +1,21 @@
+name: ads
+
+services:
+  cv-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ads-cv-lab:py3.12.10
+    container_name: ads-cv-lab
+    ports:
+      # Diger projelerle cakismamasi icin host'ta 8890 kullanilir
+      - "127.0.0.1:${JUPYTER_PORT:-8890}:8888"
+      # Arayuz (streamlit, frontend/): tarayicida http://127.0.0.1:8501
+      - "127.0.0.1:${UI_PORT:-8501}:8501"
+    volumes:
+      # Proje kok klasoru (kod klasorleri) konteynerde /workspace olarak gorunur
+      - ..:/workspace
+    # GPU istegi bu dosyada degil, docker-compose.gpu.yml'de: NVIDIA karti olmayan bir
+    # bilgisayarda da konteyner acilsin diye. docker/baslat.sh GPU varsa onu kendiliginden ekler;
+    # GPU yoksa konteyner CPU ile acilir ve YOLO (--device auto) CPU'da calisir.
+    restart: "no"

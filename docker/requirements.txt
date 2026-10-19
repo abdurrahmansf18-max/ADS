@@ -1,0 +1,64 @@
+# ADS - konteynere (ads-cv-lab) kurulan Python paketleri.
+# Her paketin ustunde: ne ise yaradigi ve hangi gereksinimlerin kullandigi.
+# Surumler sabittir. 
+
+# --- Goruntu isleme ----------------------------------------------------------
+
+# numpy: dizi ve matris hesabi (maskeler, histogram, np.polyfit ile polinom,
+# piksel-metre hesabi, IoU).
+# Kullanan: butun gereksinimler (1.1-5.5) ve ana hat (entegrasyon).
+numpy==2.5.4
+
+# opencv-python-headless (cv2): goruntu / video okuma-yazma, kamera kalibrasyonu,
+# undistort, perspektif donusumu, renk uzaylari ve esikleme, blur, Sobel / Canny,
+# morfoloji, kutu ve yazi cizimi.
+# Kullanan: 1.1, 1.2, 1.3, 2.1-2.5, 4.1-4.4, 5.1-5.5 ve ana hat (3.x kullanmaz).
+# Not: opencv-python ile ayni "cv2" klasorunu kurar, ikisi birlikte kurulmaz.
+# Konteynerde ekran olmadigi icin headless surum kullanilir.
+opencv-python-headless==5.0.0.93
+
+# matplotlib: grafik cizimi (--compare karsilastirma grafikleri).
+# Kullanan: 3.1, 3.2, 3.3.
+matplotlib==3.11.2
+
+# jupyter: Jupyter Lab gelistirme ortami (konteyner acilinca 8888 portunda baslar).
+# Kullanan: hicbir gereksinim import etmez; deneme ve gorsellestirme icin.
+jupyter==1.1.1
+
+# --- Nesne tespiti (YOLO) ----------------------------------------------------
+# [EK] 5.1 YOLO ile nesne tespiti. 2026-10-17: CPU yerine GPU (NVIDIA CUDA 13.0)
+# surumu (kullanici karari). GPU yoksa ayni paketler CPU'da da calisir: 5.1, 5.4 ve
+# ana hat varsayilan olarak --device auto kullanir (GPU ile CPU olculur, hizli olan secilir).
+# ultralytics opencv-python'i da ceker; Dockerfile kurulumdan sonra onu kaldirip
+# headless surumu yeniden kurar (yukaridaki nota bakin). torch / torchvision CUDA
+# tekerlekleri PyTorch'un deposundan gelir; CUDA kutuphaneleri (nvidia-* paketleri)
+# imaji birkac GB buyutur. Ekran karti konteynere docker-compose.gpu.yml ile verilir;
+# docker/baslat.sh GPU varsa bunu kendiliginden yapar.
+--extra-index-url https://download.pytorch.org/whl/cu130
+
+# torch: derin ogrenme cercevesi; YOLO modelini GPU'da (yoksa CPU'da) calistirir.
+# Kullanan: 5.1, 5.4 (ultralytics uzerinden) ve ana hat.
+torch==2.14.1+cu130
+
+# torchvision: torch'un goruntu yardimcilari; YOLO'nun NMS'i (5.4'un inceledigi)
+# bununla yapilir.
+# Kullanan: 5.1, 5.4 (ultralytics uzerinden).
+torchvision==0.29.1+cu130
+
+# ultralytics: YOLO modelini yukleme ve tahmin (kutu, sinif, guven, NMS ayari).
+# Kullanan: 5.1, 5.4 ve ana hat (5.1 uzerinden).
+ultralytics==8.4.176
+
+# --- Arayuz -------------------------------------------------------------------
+# [EK] streamlit (2026-10-16): Python ile yazilan, tarayicida acilan arayuz
+# (frontend/). Ana hatti (backend/entegrasyon) dogrudan cagirir; ayri bir API
+# gerekmez. Port 8501 (docker-compose.yml). Grafikler streamlit'in icinde gelir.
+# Kullanan: arayuz (frontend); hicbir gereksinim import etmez.
+streamlit==1.65.0
+
+# [EK] imageio-ffmpeg (2026-10-17): icinde hazir bir ffmpeg programi getirir. Arayuz
+# islenmis videoyu tarayicinin oynatabildigi H.264 (mp4) bicimde bununla yazar. OpenCV
+# H.264 yazamiyor; yazabildigi WebM (VP8) ana hatti saniyede 16 kareye dusuruyordu, H.264
+# saniyede ~550 kare yaziliyor (mp4v'yi tarayicilar oynatamaz).
+# Kullanan: arayuz (frontend); hicbir gereksinim import etmez.
+imageio-ffmpeg==0.6.0
