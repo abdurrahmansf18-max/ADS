@@ -5,8 +5,8 @@ Ne işe yarar:
     Modelin emin olmadığı tespitleri ve sürüşle ilgisi olmayan sınıfları eler; gereksiz alarmı önler.
 
 Nasıl çalışır:
-    Güveni eşiğin (0.45) altında kalan tespitler atılır; yalnız ilgili sınıflar (yaya, araba, motosiklet,
-    otobüs, kamyon) kalır. Kalan tespitlere risk grubu yazılır.
+    Güveni eşiğin (0.45) altında kalan tespitler atılır; yalnız ilgili sınıflar (yaya, bisiklet, araba,
+    motosiklet, otobüs, kamyon) kalır. Kalan tespitlere risk grubu yazılır.
 
 Bağlantılar:
     Alır : 5.2'nin <ad>_kutular.npz dosyası (ya da doğrudan 5.1'in tespitleri).
@@ -44,8 +44,8 @@ INPUT_PATH = OUTPUTS / "5.2 Bounding Box koordinatları" / "kolay_video_iyi_isik
 # [DEĞİŞTİR] Güven eşiği (İnşa: ~0.4-0.5).
 CONF_THRESHOLD = 0.45
 
-# [DEĞİŞTİR] Tutulacak COCO sınıfları: person, car, motorcycle, bus, truck (İnşa).
-CLASSES = (0, 2, 3, 5, 7)
+# [DEĞİŞTİR] Tutulacak COCO sınıfları: person, bicycle, car, motorcycle, bus, truck.
+CLASSES = (0, 1, 2, 3, 5, 7)
 
 # Sınıfa özel eşik (ör. {"person": 0.35}); boş ise herkes CONF_THRESHOLD.
 CLASS_CONF = {}
