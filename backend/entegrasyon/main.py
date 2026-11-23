@@ -9,8 +9,9 @@ Nasıl çalışır:
     1. Kare düzeltilir (1.1).
     2. Şerit maskesi çıkarılır: 4.1 yumuşatma + 4.2 renk + 4.3 gradyan -> 4.4 OR.
     3. Maske kuş bakışına çevrilir (1.2), şerit pikselleri bulunur (2.3), polinom uydurulur (2.4).
-       Son 8 karenin ortalaması alınır; şerit genişliği makul değilse (kurulumdaki gerçek genişliğin ±%20'si
-       dışındaysa) o karenin ölçümü reddedilir.
+       [V2] Önceki kare kabul edildiyse önce onun polinomu çevresinde aranır; olmazsa kayan pencereye düşülür.
+       Akıl sağlığı: şerit genişliği makul değilse (kurulumdaki gerçek genişliğin ±%20'si dışındaysa) ya da
+       [V2] sol–sağ eğrilik tutarsızsa (3.3) o karenin ölçümü reddedilir. Son 8 karenin ortalaması alınır.
     4. Sapma (2.5), eğrilik (3.3) ve viraj sınıfı (3.1) hesaplanır.
     5. Engeller bulunur ve şeritle ilişkilendirilir (5.1 -> 5.3 -> 5.2 -> 5.5).
     6. Şerit alanı Minv ile kareye geri çizilir (1.2), yazılar eklenir.
@@ -75,6 +76,23 @@ BLUR_TARGET = "gradient"
 # Ortalaması alınacak kare sayısı (doküman: son 5-10 kare).
 SMOOTH_FRAMES = 8
 
+
+
+# [V2] Önceki karenin polinomu çevresinde arama (2.3 search_around_poly). False: her karede kayan pencere.
+USE_PRIOR_SEARCH = True
+
+# [V2] Sol–sağ eğrilik tutarlılığı (3.3 classify): virajda şeritler zıt yöne bükülüyorsa ya da yarıçap
+# oranı (büyük R / küçük R) bu değeri aşıyorsa kare reddedilir. 0: kontrol kapalı.
+# 3.3'ün uyarı eşiği (2.0) red için fazla katı: kolay videoda karelerin ~%40'ı reddedildi, şerit kayboldu.
+CURVATURE_RATIO_MAX = 5.0
+# [V2] Bu kontrolde R bu değerden büyük olan şerit düz sayılır (A = 1 / 2R). Düz yolda iki R de çok büyük
+# ve gürültülüdür (ör. 1455 / 33061 m); oranları anlamsızdır ve düz test karelerini haksız yere reddeder.
+CURVATURE_STRAIGHT_R_M = 1000.0
+
+
+
+
+
 # Kabul edilen şerit genişliği (m): None ise kurulumda (1.3) girilen gerçek genişliğin ±LANE_WIDTH_TOLERANCE'ı
 # (3.66 m için 2.93–4.39 m); böylece başka ölçüdeki yolda da doğru çalışır. Sabit aralık için (en az, en çok) yaz.
 LANE_WIDTH_RANGE_M = None
@@ -128,6 +146,7 @@ class FrameResult:
     radius_m: float = float("nan")
     curve_direction: str = "yok"   # 3.3: "sag", "sol", "duz", "belirsiz"
     curve_class: str = "yok"       # 3.1: "duz", "hafif", "sert", "belirsiz"
+    search: str = ""               # [V2] 2.3: "onceki_polinom" ya da "kayan_pencere"
     obstacles: tuple = ()          # 5.x: her engel için sözlük (kutu, sınıf, güven, durum, mesafe, risk)
 
     def nearest_in_lane(self):
@@ -151,7 +170,8 @@ class LanePipeline:
 
     def __init__(self, calibration_path, perspective_path, scale_path, smooth_frames=SMOOTH_FRAMES,
                  lane_width_range_m=LANE_WIDTH_RANGE_M, combine_mode=COMBINE_MODE, blur_target=BLUR_TARGET,
-                 obstacles=OBSTACLES, model_path=MODEL_PATH, yolo_iou=YOLO_IOU, yolo_device=YOLO_DEVICE):
+                 obstacles=OBSTACLES, model_path=MODEL_PATH, yolo_iou=YOLO_IOU, yolo_device=YOLO_DEVICE,
+                 prior_search=USE_PRIOR_SEARCH, curvature_ratio_max=CURVATURE_RATIO_MAX):
         if combine_mode not in ("or", "and"):
             raise ValueError(f"Birleştirme modu or ya da and olmalı, verilen: {combine_mode}")
         needed = REQUIREMENTS + (OBSTACLE_REQUIREMENTS if obstacles else ())
@@ -188,6 +208,9 @@ class LanePipeline:
         self.history = deque(maxlen=smooth_frames)     # doküman: son 5-10 karenin polinomları
         self.max_misses = 2 * smooth_frames
         self.misses = 0
+        self.prior_search = prior_search
+        self.curvature_ratio_max = curvature_ratio_max
+        self.prev_fits = None      # [V2] önceki karenin kabul edilen (ham) polinomları
         self.debug_views = None
         self.obstacles = obstacles
         if obstacles:
@@ -242,21 +265,21 @@ class LanePipeline:
         """Birbirinden bağımsız görüntüler arasında geçmişi sıfırlar."""
         self.history.clear()
         self.misses = 0
+        self.prev_fits = None
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, FrameResult]:
         undistorted = self.undistorter.undistort(frame)                                    # 1.1
         mask = self._mask(undistorted)                                                     # 4.1–4.4
         birds_eye_mask = self.perspective.warp(mask)                                       # 1.2 (M)
-        lanes = self.window_search.find(birds_eye_mask)                                    # 2.3
-        result = FrameResult(left_count=len(lanes.leftx), right_count=len(lanes.rightx))
+        lanes, fits, reason, search = self._detect(birds_eye_mask)                         # 2.3, 2.4 + kontroller
+        result = FrameResult(left_count=len(lanes.leftx), right_count=len(lanes.rightx), search=search)
 
-        fits, reason = self._fit(lanes)                                                    # 2.4
-        if fits is not None:
-            accepted, reason = self._check_width(fits)
-            if accepted:
-                self.history.append(fits)
-                self.misses = 0
-                result.status = "olculdu"
+        # [V2] Önceki polinom araması yalnız ardışık kabul edilen karelerde yapılır.
+        self.prev_fits = fits if reason is None else None
+        if reason is None:
+            self.history.append(fits)
+            self.misses = 0
+            result.status = "olculdu"
         if result.status != "olculdu":
             result.reason = reason
             self.misses += 1
@@ -300,6 +323,34 @@ class LanePipeline:
         combined = self.m["4.4"].clean(combined, self.args44.morph, self.args44.morph_ksize, self.args44.morph_shape)
         return combined.astype(np.uint8) * 255
 
+    def _detect(self, birds_eye_mask):
+        """[V2] Şerit piksellerini bulur, polinom uydurur ve akıl sağlığı kontrollerini uygular.
+
+        Önceki kare kabul edildiyse önce onun polinomu çevresinde aranır (2.3 search_around_poly);
+        sonuç reddedilirse güvenli biçimde kayan pencereye (2.3 find) düşülür.
+        Dönüş: (şerit pikselleri, polinomlar, red nedeni (kabulde None), kullanılan arama).
+        """
+        if self.prior_search and self.prev_fits is not None:
+            lanes = self.window_search.search_around_poly(birds_eye_mask, *self.prev_fits)  # 2.3 (önceki polinom)
+            fits, reason = self._fit_and_check(lanes)
+            if reason is None:
+                return lanes, fits, None, "onceki_polinom"
+        lanes = self.window_search.find(birds_eye_mask)                                      # 2.3 (kayan pencere)
+        fits, reason = self._fit_and_check(lanes)
+        return lanes, fits, reason, "kayan_pencere"
+
+    def _fit_and_check(self, lanes):
+        """2.4 polinom uydurma + akıl sağlığı (genişlik, [V2] sol–sağ eğrilik). Kabulde neden None'dır."""
+        fits, reason = self._fit(lanes)                                                      # 2.4
+        if fits is None:
+            return None, reason
+        accepted, reason = self._check_width(fits)
+        if accepted:
+            accepted, reason = self._check_curvature(fits)                                   # 3.3
+        return fits, (None if accepted else reason)
+
+
+
     def _fit(self, lanes):
         """2.4: her şerit için np.polyfit(y, x, 2); uydurulamazsa nedeni döner."""
         polinom = self.m["2.4"]
@@ -323,6 +374,43 @@ class LanePipeline:
         return False, (f"şerit genişliği makul değil (alt/orta/üst {widths[0]:.2f}/{widths[1]:.2f}/"
                        f"{widths[2]:.2f} m; kabul {low}-{high} m)")
 
+
+
+
+
+
+
+
+    def _curvature(self, left, right):
+        """3.3: piksel polinomlarını metreye çevirir; araca en yakın satırda sol ve sağ R'yi hesaplar."""
+        egrilik = self.m["3.3"]
+        fits_m = {"left": egrilik.pixel_fit_to_meters(left, self.xm, self.ym),
+                  "right": egrilik.pixel_fit_to_meters(right, self.xm, self.ym)}
+        y_eval_m = (self.size[1] - 1) * self.ym                                            # araca en yakın satır
+        radii = {side: float(egrilik.radius_of_curvature(fit[0], fit[1], y_eval_m)) for side, fit in fits_m.items()}
+        return fits_m, radii
+
+    def _check_curvature(self, fits):
+        """[V2] Sol–sağ eğrilik tutarlılığı: 3.3 classify()'ın consistent bayrağı akıl sağlığına bağlanır.
+
+        Gerçek yolda iki şerit aynı yöne ve benzer yarıçapla bükülür. Zıt yöne bükülme ya da
+        R oranı > curvature_ratio_max ise ölçüm hatalı sayılır; kare reddedilir, önceki iyi uyum kullanılır.
+        """
+        if not self.curvature_ratio_max:
+            return True, ""
+        egrilik = self.m["3.3"]
+        fits_m, radii = self._curvature(*fits)
+        straight_max_a = 1.0 / (2.0 * CURVATURE_STRAIGHT_R_M)                              # R > 1000 m: düz
+        _, _, consistent = egrilik.classify(fits_m, radii, straight_max_a, self.curvature_ratio_max)
+        if consistent:
+            return True, ""
+        return False, (f"sol–sağ eğrilik tutarsız (R sol/sağ {radii['left']:.0f}/{radii['right']:.0f} m; "
+                       f"kabul: aynı yön, oran ≤ {self.curvature_ratio_max:g})")
+
+
+
+
+
     def _measure(self, left, right, result):
         height = self.size[1]
         result.lane_width_m = float((np.polyval(right, height - 1) - np.polyval(left, height - 1)) * self.xm)
@@ -332,10 +420,7 @@ class LanePipeline:
             result.reason = str(exc)
 
         egrilik, katsayi = self.m["3.3"], self.m["3.1"]
-        fits_m = {"left": egrilik.pixel_fit_to_meters(left, self.xm, self.ym),
-                  "right": egrilik.pixel_fit_to_meters(right, self.xm, self.ym)}
-        y_eval_m = (height - 1) * self.ym                                                  # araca en yakın satır
-        radii = {side: float(egrilik.radius_of_curvature(fit[0], fit[1], y_eval_m)) for side, fit in fits_m.items()}
+        fits_m, radii = self._curvature(left, right)                                       # 3.3
         direction, radius, _ = egrilik.classify(fits_m, radii, egrilik.STRAIGHT_MAX_A, egrilik.LR_RATIO_WARN)  # 3.3
         a_m = {"left": float(katsayi.a_to_meters(left[0], self.xm, self.ym)),
                "right": float(katsayi.a_to_meters(right[0], self.xm, self.ym))}
@@ -534,6 +619,10 @@ def print_summary(name, results, busy, video_path, csv_path):
     print(f"{name}: {len(results)} kare, işleme hızı {len(results) / busy:.1f} FPS")
     print(f"  Durum: bu karede ölçüldü {statuses['olculdu']}, önceki karelerden {statuses['gecmisten']}, "
           f"şerit yok {statuses['yok']}")
+    # [V2] Ölçülen karelerde hangi aramanın kullanıldığı (2.3).
+    searches = Counter(r.search for r in results if r.status == "olculdu")
+    print(f"  Arama (ölçülen karelerde): önceki polinom {searches['onceki_polinom']}, "
+          f"kayan pencere {searches['kayan_pencere']}")
     if measured:
         offsets = np.array([r.offset.offset_m for r in measured])
         widths = np.array([r.lane_width_m for r in measured])
@@ -581,6 +670,11 @@ def parse_args():
     parser.add_argument("--lane-width-range", type=float, nargs=2, default=LANE_WIDTH_RANGE_M,
                         help="Kabul edilen şerit genişliği, m (en az, en çok); varsayılan: ölçek dosyasındaki "
                              f"gerçek genişliğin ±%%{LANE_WIDTH_TOLERANCE * 100:.0f}'si")
+    parser.add_argument("--no-prior-search", dest="prior_search", action="store_false", default=USE_PRIOR_SEARCH,
+                        help="[V2] Önceki polinom çevresinde aramayı kapat (her karede kayan pencere)")
+    parser.add_argument("--curv-ratio", type=float, default=CURVATURE_RATIO_MAX,
+                        help=f"[V2] Sol–sağ eğrilik tutarlılığı: en büyük R oranı; 0 kontrolü kapatır "
+                             f"(varsayılan: {CURVATURE_RATIO_MAX})")
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR, help=f"Çıktı klasörü (varsayılan: {OUTPUT_DIR})")
     parser.add_argument("--max-frames", type=int, default=MAX_FRAMES, help="Videoda en çok kaç kare işlensin")
     parser.add_argument("--debug", action="store_true", default=DEBUG, help="Köşede maske ve kayan pencere görüntüsü")
@@ -588,6 +682,10 @@ def parse_args():
     args = parser.parse_args()
     if args.smooth < 1:
         parser.error("--smooth en az 1 olmalı.")
+
+    if args.curv_ratio != 0 and args.curv_ratio < 1:
+        parser.error("--curv-ratio 0 (kapalı) ya da en az 1 olmalı.")
+
     if args.lane_width_range is not None and not 0 < args.lane_width_range[0] < args.lane_width_range[1]:
         parser.error("--lane-width-range: 0 < en az < en çok olmalı.")
     return args
@@ -608,7 +706,8 @@ def main():
         pipeline = LanePipeline(args.calibration, args.perspective, args.scale, smooth_frames=args.smooth,
                                 lane_width_range_m=args.lane_width_range, combine_mode=args.combine,
                                 blur_target=args.blur_target, obstacles=args.obstacles, model_path=args.model,
-                                yolo_iou=args.iou, yolo_device=args.device)
+                                yolo_iou=args.iou, yolo_device=args.device, prior_search=args.prior_search,
+                                curvature_ratio_max=args.curv_ratio)
         low, high = pipeline.lane_width_range_m
         print(f"Kabul edilen şerit genişliği: {low:.2f}–{high:.2f} m")
         if pipeline.obstacles:
