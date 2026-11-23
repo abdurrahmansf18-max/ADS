@@ -222,6 +222,44 @@ class SlidingWindowSearch:
             windows=windows,
         )
 
+
+    def search_around_poly(self, mask: np.ndarray, left_fit: np.ndarray, right_fit: np.ndarray) -> LanePixels:
+        """[V2] Önceki karenin polinomları çevresinde (±margin) şerit piksellerini arar.
+
+        Ardışık karelerde şerit çok az kayar; bu yüzden histogram ve pencereler yeniden kurulmaz.
+        Her maske pikseli için polinomun o satırdaki x değeri hesaplanır; ±margin içindekiler o
+        şeride yazılır. Sonuç find() ile aynı biçimdedir (LanePixels); pencere listesi boştur.
+        """
+        binary = to_binary(mask, self.mask_threshold)
+        height, width = binary.shape
+        nonzeroy, nonzerox = binary.nonzero()
+        margin, _ = self.window_geometry((width, height))   # kayan pencereyle aynı yarı genişlik
+
+        lane_indices = {}
+        for side, fit in (("left", left_fit), ("right", right_fit)):
+            center_x = np.polyval(fit, nonzeroy)             # x = A*y^2 + B*y + C, her pikselin satırında
+            lane_indices[side] = (np.abs(nonzerox - center_x) < margin).nonzero()[0]
+
+        left, right = lane_indices["left"], lane_indices["right"]
+        # Başlangıç noktası: polinomun en alt satırdaki x değeri (çizim ve özet için).
+        left_base = int(np.clip(np.polyval(left_fit, height - 1), 0, width - 1))
+        right_base = int(np.clip(np.polyval(right_fit, height - 1), 0, width - 1))
+        return LanePixels(
+            leftx=nonzerox[left].astype(np.int32),
+            lefty=nonzeroy[left].astype(np.int32),
+            rightx=nonzerox[right].astype(np.int32),
+            righty=nonzeroy[right].astype(np.int32),
+            left_base=left_base,
+            right_base=right_base,
+            histogram=np.sum(binary[height // 2:, :], axis=0),
+            binary=binary,
+            windows=[],
+        )
+
+
+
+
+
     def _track(self, nonzerox, nonzeroy, base, edges, margin, min_pixels, width, side):
         """Tek bir şeridi alttan yukarı pencerelerle takip eder."""
         current = base
